@@ -1,0 +1,95 @@
+{
+  "id": "CHAT-RICHEDITOR-XSS-001",
+  "title": "Stored DOM-XSS via [chat] BBCode `quote` username in chat rich-editor extension (plugins/chat)",
+  "track": "A",
+  "status": "candidate",
+  "severity": "high",
+  "confidence": "high",
+  "cwe": ["CWE-79", "CWE-87"],
+  "vuln_class": "stored-dom-xss",
+  "correlation_id": "discourse-chat-rich-editor-username-innerHTML",
+  "summary": "The chat plugin's ProseMirror (WYSIWYG / rich editor) extension `toDOM` callback concatenates `node.attrs.username` directly into an `innerHTML` template literal. `username` is taken verbatim from the first `;`-separated segment of the `quote=\"...\"` attribute on a user-authored `[chat]` BBCode block, with no escaping anywhere on the markdown -> token -> ProseMirror node -> DOM path. Any low-privileged user can post markdown that, when later opened in the rich editor by another user (most importantly an admin/moderator clicking 'Edit'), executes attacker JavaScript in the victim's authenticated origin context. The site default `default_composition_mode = 1` (rich) puts every new account into the vulnerable editor.",
+  "source": {
+    "kind": "user-input",
+    "where": "POST /posts body `raw` containing [chat quote=\"<payload>;...;...\" ...]...[/chat] BBCode",
+    "actor": "any user able to author markdown (TL0/TL1+)"
+  },
+  "flow": [
+    {
+      "step": 1,
+      "file": "frontend/discourse-markdown-it/src/features/bbcode-block.js",
+      "lines": "85-88, 138-162",
+      "note": "BBCode parser accepts `\"[^\"]+\"` (and smart-quote variants) inside `quote=\"...\"`; the raw value lands in tagInfo.attrs.quote with `<`, `>`, `=`, etc. intact."
+    },
+    {
+      "step": 2,
+      "file": "plugins/chat/assets/javascripts/lib/discourse-markdown/chat-transcript.js",
+      "lines": "19-20",
+      "note": "`const [username, messageIdStart, messageTimeStart] = tagInfo.attrs.quote.split(';')` -> attacker controls `username` (first segment)."
+    },
+    {
+      "step": 3,
+      "file": "plugins/chat/assets/javascripts/lib/discourse-markdown/chat-transcript.js",
+      "lines": "131, 201-202",
+      "note": "username is stored as token attr `data-username` (raw) and as the content of an `html_inline` token (also raw). markdown-it's HTML renderer escapes attrs at render time, but the rich-editor parser bypasses HTML rendering."
+    },
+    {
+      "step": 4,
+      "file": "plugins/chat/assets/javascripts/lib/rich-editor-extension.js",
+      "lines": "186-201",
+      "note": "ProseMirror parse hook reads `token.attrGet('data-username')`, which returns the raw unescaped string, and stores it as `node.attrs.username` on the `chat` schema node."
+    },
+    {
+      "step": 5,
+      "file": "frontend/discourse/app/static/prosemirror/components/prosemirror-editor.gjs",
+      "lines": "333-349",
+      "note": "When the editor mounts/edits, `convertFromValue` runs `this.parser.convert(this.schema, value)` over the post's raw markdown, then commits the resulting doc to the view, which calls each node's toDOM."
+    },
+    {
+      "step": 6,
+      "file": "plugins/chat/assets/javascripts/lib/rich-editor-extension.js",
+      "lines": "75-78",
+      "note": "SINK: `userElement.innerHTML = `<span class=\"chat-transcript-username\">${node.attrs.username}</span><span class=\"chat-transcript-datetime\">${formattedDateTime}</span>``. Browser parses the resulting markup; an `<img onerror=...>` payload inside the username fires immediately."
+    }
+  ],
+  "sink": {
+    "file": "plugins/chat/assets/javascripts/lib/rich-editor-extension.js",
+    "lines": "75-78",
+    "kind": "Element.innerHTML setter with attacker-controlled string"
+  },
+  "reachability": {
+    "trigger": "Any user opens the attacker's post in the rich editor (default composition mode). Practical triggers: (a) admin/mod clicks Edit on the attacker's post; (b) any user uses Quote-whole-post to insert the post's markdown into their own composer; (c) attacker reopens their own draft (self-XSS, useful for chains).",
+    "preconditions": [
+      "chat plugin enabled (default on chat-bundled sites)",
+      "victim's composition_mode == 'rich' (site default since rich editor became default)"
+    ],
+    "default_exploitable": true
+  },
+  "impact": {
+    "execution_context": "victim browser, on Discourse origin, with session cookies and CSRF token available",
+    "primitives": [
+      "exfiltrate session cookies (httpOnly limits direct cookie reads, but JS-on-origin can call any API the session is authorised for)",
+      "call admin REST API with X-CSRF-Token meta tag content (full admin takeover if victim is staff)",
+      "install malicious theme/component -> persistent JS for every visitor -> full forum takeover",
+      "trigger email-takeover flows when victim is a normal user"
+    ]
+  },
+  "evidence": {
+    "code_paths_verified": true,
+    "dynamic_repro": "not attempted (no live target provided)",
+    "static_proof": "see workspace/report/CHAT-RICHEDITOR-XSS-001/{finding.md, poc.js, exploit.md}"
+  },
+  "repro": {
+    "poc": "[chat quote=\"<img src=x onerror=alert(document.domain)>;1;2026-01-01T00:00:00Z\" channel=\"x\" channelId=1]\nhello\n[/chat]",
+    "poc_script": "see workspace/report/CHAT-RICHEDITOR-XSS-001/poc.js"
+  },
+  "disclosure": {
+    "status": "unknown",
+    "notes": "Not yet checked against Discourse security advisories. Recent commits (Mar-May 2026) fix several near-by issues (assignee XSS, category description XSS, omniauth provider escape, review-queue highlightWatchedWords XSS, codes_to_img). None of those touch plugins/chat/assets/javascripts/lib/rich-editor-extension.js. Confirm against Discourse GHSA list before reporting."
+  },
+  "remediation": {
+    "minimum_fix": "Escape `node.attrs.username` before interpolation, e.g. `${escapeExpression(node.attrs.username)}` (discourse/lib/utilities), or build the username span via createElement + textContent.",
+    "preferred_fix": "Stop using innerHTML in toDOM altogether for user-controlled attrs - construct DOM nodes via createElement and assign user values via textContent / set attributes via setAttribute. Apply the same audit to: serializeNode's bbCodeAttrs string-builder (line 144, separate quoting bug, no DOM impact).",
+    "regression_test": "Add an integration test analogous to plugins/chat/test/javascripts/components/rich-editor-extension-test.gjs asserting that an `<img>`-bearing username produces a chat-transcript-username span with no `<img>` descendant."
+  }
+}
