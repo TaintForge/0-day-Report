@@ -1,0 +1,14 @@
+{
+  "name": "svc4-migrator-traversal",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.45.2",
+    "express": "^4.21.0",
+    "mysql2": "^3.11.0"
+  }
+}
