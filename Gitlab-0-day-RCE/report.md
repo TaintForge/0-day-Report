@@ -204,7 +204,8 @@ SRT sandbox test successful, running command: duo run ... --rejection-reason 'a'
 uid=0(root) gid=0(root) groups=0(root)              ← injected /usr/bin/id executed as root
 /usr/bin/bash: line 245: : command not found        ← trailing empty ('') command
 ```
-{F6039987}
+<img width="1050" height="174" alt="image" src="https://github.com/user-attachments/assets/dc570fcd-34b3-4dc5-aee5-98dbd46c0ec4" />
+
 
 Crucially, the Duo CLI's own debug log in the *same* trace shows:
 
